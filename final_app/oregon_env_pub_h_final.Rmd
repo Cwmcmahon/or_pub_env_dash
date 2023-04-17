@@ -1,0 +1,367 @@
+---
+title: "Hospitalizations and Environmental Contaminants in Oregon"
+output:
+  flexdashboard::flex_dashboard:
+    theme:
+      verson: 4
+      bg: '#FFFFFF'
+      fg: '#000000'
+      primary: '#1A1A1A'
+      navbar-bg: '#000000'
+      base_font:
+        google: Jost
+      code_font:
+        google: Noto Sans Mono
+      heading_font:
+        google: Jost
+      font_scale: 1
+    orientation: rows
+    vertical_layout: fill
+runtime: shiny
+---
+
+```{r global, include=FALSE}
+library(flexdashboard)
+library(tidyverse)
+library(sf)
+library(ggiraph)
+library(DT)
+load("shiny_data.RData")
+```
+
+Column {.sidebar data-width=320}
+=====================================
+
+### Select a year, health issue, or water contaminant
+
+```{r}
+selectInput(inputId = "year",
+            label = "Year",
+            choices = c(2017:2018),
+            selected = 2018)
+
+selectInput(inputId = "type",
+            label = "Reason for Hospitalization",
+            choices = hosp_sf$type %>% unique(),
+            selected = "Heart attack")
+
+selectInput(inputId = "water",
+            label = "Water Contaminant",
+            choices = c("Arsenic", "HAA5", "Nitrate", "TTHM"),
+            selected = "Arsenic")
+```
+
+Maps
+=====================================
+
+Row
+-----------------------------------------------------------------------
+
+### Hospitalizations {.no-title}
+```{r}
+renderGirafe({
+  hosp_fil <- 
+    hosp_sf %>%
+    filter(year == input$year
+           & type == input$type) %>%
+    mutate(tooltip = paste(county, "\n", rate, sep = " "))
+  
+  hosp_top <-
+    hosp_fil %>%
+    as.data.frame() %>%
+    arrange(desc(rate)) %>%
+    slice_head(n = 3) %>%
+    select(county)
+  
+  hosp_plot <-
+    ggplot(hosp_fil) +
+    geom_sf_interactive(aes(fill = rate,
+                            tooltip = tooltip,
+                            data_id = county)) +
+    scale_fill_steps_interactive(name = "Rate per \n 10k pop.",
+                                  breaks = ifelse(rep(input$type == "Heart attack", times = 6),
+                                                  c(0, 10, 20, 30, 40, 50),
+                                                  c(0, 2, 4, 6, 8, 10)),
+                                  labels = ifelse(rep(input$type == "Heart attack", times = 6),
+                                                  c("0", "10", "20", "30", "40", "50"),
+                                                  c("0", "2", "4", "6", "8", "10")),
+                                  limits = ifelse(rep(input$type == "Heart attack", times = 2),
+                                                  c(0, 50),
+                                                  c(0, 10)),
+                                  low = "white",
+                                  high = "red") +
+    labs(title = paste0("Rate of ", 
+                        tolower(input$type),
+                        " hospitalizations by county in ", 
+                        input$year),
+         subtitle = paste0("The 3 counties with the highest rate of ",
+                          tolower(input$type),
+                          " hospitalizations \n in ",
+                          input$year,
+                          " were ",
+                          hosp_top[[1]][1],
+                          ", ",
+                          hosp_top[[1]][2],
+                          ", and ",
+                          hosp_top[[1]][3])) +
+    theme_minimal() +
+    theme(axis.title = element_blank(),
+          panel.grid = element_blank(),
+          legend.title = element_text(size = 10),
+          text = element_text(family = "Jost", face = "plain"),
+          axis.text = element_blank())
+  girafe(ggobj = hosp_plot,
+         options = list(opts_toolbar(hidden = c("selection", "zoom", "misc"))))
+  },
+  outputArgs = list(width = 525, height = 450)
+)
+```
+
+Row
+-----------------------------------------------------------------------
+
+### Air Quality {.no-title}
+
+```{r}
+renderGirafe({
+  air_fil <- filter(air_sf,
+                      year == input$year) %>%
+    mutate(tooltip = paste(station, "\n", pm2.5, sep = " "),
+           threshold = as.character(pm2.5 >= 12))
+  
+  air_top <-
+    air_fil %>%
+    as.data.frame() %>%
+    arrange(desc(pm2.5)) %>%
+    slice_head(n = 3) %>%
+    select(station)
+  
+  air_plot <- 
+    ggplot(air_fil) +
+    geom_sf(data = or_counties_sf,
+            fill = "white") +
+    geom_point_interactive(size = 2,
+                           color = "black",
+                           aes(x = lon, 
+                               y = lat,
+                               fill = pm2.5,
+                               shape = threshold,
+                               tooltip = tooltip,
+                               data_id = station)) +    
+    scale_fill_steps_interactive(name = "PM2.5 \n (µg/m3)",
+                                 breaks = c(0, 6, 12, 18, 24, 30),
+                                 labels = c("0", "6", "12", "18", "24", "30"),
+                                 limits = c(0, 30),
+                                 low = "white",
+                                 high = "red") +
+    scale_shape_manual(name = "Above \n threshold \n (12 µg/m3)",
+                       values = c("TRUE" = 24, "FALSE" = 21),
+                       na.value = 21) +
+    labs(title = paste0("Average amount of PM2.5 detected at air quality monitoring \n stations in ",
+                        input$year),
+         subtitle = paste0("The 3 stations that detected the highest average amount of PM2.5 in \n",
+                          input$year,
+                          " were ",
+                          air_top[[1]][1],
+                          ", ",
+                          air_top[[1]][2],
+                          ", \n and ",
+                          air_top[[1]][3])) +    
+    theme_minimal() +
+    theme(axis.title = element_blank(),
+          panel.grid = element_blank(),
+          text = element_text(family = "Jost", face = "plain"),
+          axis.text = element_blank())
+  girafe(ggobj = air_plot,
+         options = list(opts_toolbar(hidden = c("selection", "zoom", "misc"))))
+  },
+  outputArgs = list(width = 525, height = 450)
+)
+```
+
+### Water Contaminants {.no-title}
+```{r}
+renderGirafe({
+  water_q_fil <- 
+    water_sf %>%
+    filter(year == input$year) %>%
+    select(county, year, tolower(input$water), geometry) %>%
+    rename(metric = tolower(input$water)) %>%
+    mutate(tooltip = paste(county, "\n", metric, sep = " "))
+  
+  water_top <-
+    water_q_fil %>%
+    as.data.frame() %>%
+    arrange(desc(metric)) %>%
+    slice_head(n = 3) %>%
+    select(county)
+  
+  water_plot <-
+    ggplot(water_q_fil) +
+    geom_sf_interactive(aes(fill = metric,
+                            tooltip = tooltip,
+                            data_id = county)) +
+    scale_fill_steps_interactive(name = case_when(input$water == "Arsenic" ~
+                                                     "Arsenic \n (ppb)",
+                                                   input$water == "HAA5" ~
+                                                     "HAA5 \n (ppb)",
+                                                   input$water == "Nitrate" ~
+                                                     "Nitrate \n (ppm)",
+                                                   input$water == "TTHM" ~
+                                                     "TTHM \n (ppb)"),
+                                  breaks = case_when(rep(input$water == "Arsenic", 6) ~
+                                                       c(0, 3, 6, 9, 12, 15),
+                                                     rep(input$water == "HAA5", 6) ~
+                                                       c(0, 15, 30, 45, 60, 75),
+                                                     rep(input$water == "Nitrate", 6) ~
+                                                       c(0, 3, 6, 9, 12, 15),
+                                                     rep(input$water == "TTHM", 6) ~
+                                                       c(0, 20, 40, 60, 80, 100)),
+                                  labels = case_when(rep(input$water == "Arsenic", 6) ~
+                                                       c("0", "3", "6", "9", "12", "15"),
+                                                     rep(input$water == "HAA5", 6) ~
+                                                       c("0", "15", "30", "45", "60", "75"),
+                                                     rep(input$water == "Nitrate", 6) ~
+                                                       c("0", "3", "6", "9", "12", "15"),
+                                                     rep(input$water == "TTHM", 6) ~
+                                                       c("0", "20", "40", "60", "80", "100")),
+                                  limits = case_when(rep(input$water == "Arsenic", 2) ~
+                                                       c(0, 15),
+                                                     rep(input$water == "HAA5", 2) ~
+                                                       c(0, 75),
+                                                     rep(input$water == "Nitrate", 2) ~
+                                                       c(0, 15),
+                                                     rep(input$water == "TTHM", 2) ~
+                                                       c(0, 100)),
+                                  low = "white",
+                                  high = "red") +
+    labs(title = paste0("Average amount of ", 
+                        case_when(input$water == "Arsenic" ~ "arsenic",
+                                  input$water == "HAA5" ~ "HAA5",
+                                  input$water == "Nitrate" ~ "nitrate",
+                                  input$water == "TTHM" ~ "TTHM"),
+                        " found in community water systems \n in ",
+                        input$year),
+         subtitle = paste0("The 3 counties with the highest average amount of ",
+                          case_when(input$water == "Arsenic" ~ "arsenic",
+                                    input$water == "HAA5" ~ "HAA5",
+                                    input$water == "Nitrate" ~ "nitrate",
+                                    input$water == "TTHM" ~ "TTHM"),
+                          " found in \n community water systems in ",
+                          input$year,
+                          " were ",
+                          water_top[[1]][1],
+                          ", ",
+                          water_top[[1]][2],
+                          ", and ",
+                          water_top[[1]][3],
+                          ". \n No counties exceeded the safe threshold for ",
+                          case_when(input$water == "Arsenic" ~ "arsenic",
+                                    input$water == "HAA5" ~ "HAA5",
+                                    input$water == "Nitrate" ~ "nitrate",
+                                    input$water == "TTHM" ~ "TTHM"),
+                          case_when(input$water == "Arsenic" ~ " (10 ppb)",
+                                    input$water == "HAA5" ~ " (60 ppb)",
+                                    input$water == "Nitrate" ~ " (10 ppm)",
+                                    input$water == "TTHM" ~ " (80 ppb)"))) +
+    theme_minimal() +
+    theme(axis.title = element_blank(),
+          panel.grid = element_blank(),
+          text = element_text(family = "Jost", face = "plain"),
+          axis.text = element_blank())
+  girafe(ggobj = water_plot,
+         options = list(opts_toolbar(hidden = c("selection", "zoom", "misc"))))
+  },
+  outputArgs = list(width = 525, height = 450)
+)
+```
+
+Table
+=====================================
+
+```{r}
+renderDT(
+  {water_comp <- 
+    water_sf %>%
+    as.data.frame() %>%
+    filter(year == input$year) %>%
+    select(county, tolower(input$water))
+  
+  air_comp <- 
+    air_sf %>%
+    as.data.frame() %>%
+    filter(year == input$year) %>%
+    select(county, pm2.5) %>%
+    group_by(county) %>%
+    summarize(pm2.5 = mean(pm2.5, na.rm = T))
+  
+  hosp_comp <-
+    hosp_sf %>%
+    as.data.frame() %>%
+    filter(year == input$year
+           & type == input$type) %>%
+    select(county, rate) %>%
+    rename(hospitalizations_per_10k = rate)
+  
+  hosp_comp %>%
+    left_join(water_comp) %>%
+    left_join(air_comp) %>%
+    arrange(desc(hospitalizations_per_10k)) %>%
+    select(county, pm2.5, tolower(input$water), hospitalizations_per_10k) %>%
+    datatable(colnames = c("County",
+                           "PM2.5 (µg/m3)",
+                           case_when(input$water == "Arsenic" ~
+                                       "Arsenic (ppb)",
+                                     input$water == "HAA5" ~
+                                       "HAA5 (ppb)",
+                                     input$water == "Nitrate" ~
+                                       "Nitrate (ppm)",
+                                     input$water == "TTHM" ~
+                                       "TTHM (ppb)"),
+                           paste0(input$type, " hospitalizations per 10k")),
+              options = list(dom = "t",
+                             pageLength = 36,
+                             lengthMenu = c(5, 10, 18, 36))) %>%
+    formatStyle(3,
+                  backgroundColor = styleInterval(
+                    case_when(input$water == "Arsenic" ~ 10,
+                              input$water == "HAA5" ~ 60,
+                              input$water == "Nitrate" ~ 10,
+                              input$water == "TTHM" ~ 80),
+                    c("white", "red")),
+                  color = styleInterval(
+                    case_when(input$water == "Arsenic" ~ 10,
+                              input$water == "HAA5" ~ 60,
+                              input$water == "Nitrate" ~ 10,
+                              input$water == "TTHM" ~ 80),
+                    c("black", "white")))
+})
+```
+
+Data Sources and Important Notes
+=====================================
+
+### Data sources {.no-title}
+
+>Important notes:
+
+The options for "Year" are limited to the those years which all three datasets have in common. The air quality dataset covers 2017 to 2023, the water quality dataset covers from 2002 to 2020, and the hospitalizations datasets cover 2015 to 2018.
+
+Nitrate is the only water contaminant that was consistently tested for in the dataset, but I believe that the other contaminants (arsenic, HAA5, and TTHM) were tested for enough to make it viable to present them. Almost none of the water contaminants were found to be above their respective safe thresholds in the years covered by the dataset.
+
+Data for other outdoor air contaminants (ozone, nitrogen dioxide) was extremely sparse, even more so than the (non-nitrate) water contaminants. There was not nearly enough data to present anything about ozone or nitrogen dioxide.
+
+In the future I plan on extending this app by training a model to predict particular health risks based on the environmental data I have, additional environmental data, and social and economic data. My end goal is to have users select variables that they are most interested in and then display something similar to what the app looks like now, but with the addition of how important those variables ended up being in the model (and maybe even train a model using just those variables).
+
+
+>Data sources:
+
+<a href="https://oraqi.deq.state.or.us/home/map">Air quality data</a>
+
+<a href="https://visual-data.dhsoha.state.or.us/t/OHA/views/AsthmaHospitalizationsDashboard_16479066489780/VisualView?%3Adisplay_count=n&%3Aembed=y&%3AisGuestRedirectFromVizportal=y&%3Aorigin=viz_share_link&%3AshowAppBanner=false&%3AshowVizHome=n">Asthma hospitalizations data</a>
+
+<a href="https://visual-data.dhsoha.state.or.us/t/OHA/views/AsthmaHospitalizationsDashboard_16479066489780/VisualView?%3Adisplay_count=n&%3Aembed=y&%3AisGuestRedirectFromVizportal=y&%3Aorigin=viz_share_link&%3AshowAppBanner=false&%3AshowVizHome=n">Heart attack hospitalizations</a>
+
+<a href="https://visual-data.dhsoha.state.or.us/t/OHA/views/CommunityWaterSystem_16680312416720/MapVisualization?%3Adisplay_count=n&%3Aembed=y&%3AisGuestRedirectFromVizportal=y&%3Aorigin=viz_share_link&%3AshowAppBanner=false&%3AshowVizHome=n">Water quality data</a> 
+
+

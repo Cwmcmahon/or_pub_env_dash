@@ -1,0 +1,13 @@
+name: oregon_pub_env_dash
+title: oregon_pub_env_dash
+username:
+account: cartermcmahon
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 8878125
+bundleId: 7101803
+url: https://cartermcmahon.shinyapps.io/oregon_pub_env_dash/
+when: 1681773299.32662
+lastSyncTime: 1681773299.32663
+asMultiple: FALSE
+asStatic: FALSE
